@@ -79,7 +79,8 @@ class MAPPOTrainer:
             buffer.reset()
 
             for _ in range(self.config["train"]["rollout_length"]):
-                logits, values = policy(observations)
+                with torch.no_grad():
+                    logits, values = policy(observations)
                 dist = Categorical(logits=logits)
                 actions = dist.sample()
                 log_probs = dist.log_prob(actions)
@@ -89,15 +90,15 @@ class MAPPOTrainer:
                 dones = step_result.dones
 
                 buffer.add(
-                    obs=observations,
-                    pos=positions,
-                    hidden=values.unsqueeze(-1),
+                    obs=observations.detach(),
+                    pos=positions.detach(),
+                    hidden=values.unsqueeze(-1).detach(),
                     history=dummy_history,
-                    actions=actions,
-                    log_probs=log_probs,
-                    values=values,
-                    rewards=rewards,
-                    dones=dones,
+                    actions=actions.detach(),
+                    log_probs=log_probs.detach(),
+                    values=values.detach(),
+                    rewards=rewards.detach(),
+                    dones=dones.detach(),
                 )
 
                 observations = step_result.observations

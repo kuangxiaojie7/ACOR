@@ -43,6 +43,10 @@
        --output_dir runs \
        --run_name acor_single
    ```
+   ```bash
+   # 单行命令，1卡运行 ACOR
+   python -m scripts.train_acor --config configs/acor_spread.yaml --output_dir runs --run_name acor_1gpu
+   ```
 
 5. **单卡运行 MAPPO 基线**  
    ```bash
@@ -73,11 +77,25 @@
        --run_name mappo_ddp
    ```
 
-7. **确认运行成功**  
-   - 终端持续输出 JSON 日志（包括 `global_step`、`episode_return` 等字段）。  
-   - `runs/<run_name>/metrics.jsonl` 文件不断增大。  
-   - 定期生成 `checkpoint_*.pt` 检查点文件。
+7. **断点续训（Resume）**
+   - 在 `configs/acor_spread.yaml` 的 `train` 段落中加入 `resume_from` 指向 checkpoint 路径  
+     ```yaml
+     train:
+       resume_from: runs/acor_ddp/checkpoint_000500.pt
+     ```
+   - 也可以在命令行覆盖：  
+     ```bash
+     torchrun --nproc_per_node=4 -m scripts.train_acor \
+         --config configs/acor_spread.yaml \
+         --output_dir runs \
+         --run_name acor_ddp \
+         --train.resume_from=runs/acor_ddp/checkpoint_000500.pt
+     ```
 
+8. **确认运行成功**
+   - �ն˳������ JSON ��־������ `global_step`��`episode_return` ���ֶΣ���  
+   - `runs/<run_name>/metrics.jsonl` �ļ���������  
+   - �������� `checkpoint_*.pt` �����ļ���
 ---
 
 ## 与基线对比及结果图绘制
@@ -131,3 +149,10 @@
 - 如需迁移至其他多智能体环境，可在 `acor/envs` 目录新增封装，实现相同的接口即可。
 
 完成上述步骤后，即可顺利运行 ACOR，并生成与基线的性能对比图。祝实验顺利！
+
+
+
+
+
+
+
