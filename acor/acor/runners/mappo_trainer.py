@@ -70,6 +70,8 @@ class MAPPOTrainer:
         observations, positions = env.reset()
         dummy_history = torch.zeros(exp_cfg["num_envs"], num_agents, 1, 1, device=self.device)
         done_mask = torch.zeros(exp_cfg["num_envs"], num_agents, device=self.device)
+        episode_returns = torch.zeros(exp_cfg["num_envs"], device=self.device)
+        recent_returns: list[float] = []
 
         total_updates = self.config["train"]["total_updates"]
         global_step = 0
@@ -88,6 +90,12 @@ class MAPPOTrainer:
                 step_result = env.step(actions)
                 rewards = step_result.rewards
                 dones = step_result.dones
+
+                episode_returns += rewards.sum(dim=-1)
+                done_envs = dones.sum(dim=-1) > 0
+                if done_envs.any():
+                    recent_returns.extend(episode_returns[done_envs].tolist())
+                    episode_returns[done_envs] = 0.0
 
                 buffer.add(
                     obs=observations.detach(),
@@ -120,6 +128,11 @@ class MAPPOTrainer:
             metrics["fps"] = global_step / (time.time() - start_time + 1e-9)
             metrics["global_step"] = global_step
             metrics["update"] = update_idx
+            if recent_returns:
+                metrics["episode_return"] = float(sum(recent_returns) / len(recent_returns))
+                recent_returns.clear()
+            else:
+                metrics["episode_return"] = 0.0
 
             if is_main_process() and update_idx % exp_cfg.get("log_interval", 10) == 0:
                 self.logger.log(metrics)
