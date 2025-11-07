@@ -14,6 +14,7 @@ from ..modules import TrustMemory
 from ..utils.buffers import RolloutBuffer
 from ..utils.distributed import init_distributed_mode, is_distributed, is_main_process, local_rank
 from ..utils.logger import JSONLogger, format_metrics
+from ..utils.reward_normalizer import RewardNormalizer
 
 
 class ACORTrainer:
@@ -32,6 +33,11 @@ class ACORTrainer:
 
         self.logger = JSONLogger(output_dir=str(self.output_dir) if self.output_dir else None)
         self.checkpoint_interval = config["experiment"].get("checkpoint_interval", 0)
+        reward_cfg = self.config["train"].get("reward", {})
+        self.reward_scale = float(reward_cfg.get("scale", 1.0))
+        self.reward_normalize = reward_cfg.get("normalize", True)
+        self.reward_clip = reward_cfg.get("clip", None)
+        self.reward_normalizer = RewardNormalizer(clip_value=self.reward_clip) if self.reward_normalize else None
 
     def _setup_device(self) -> None:
         hw = self.config["hardware"]
@@ -107,7 +113,7 @@ class ACORTrainer:
         observations, positions = env.reset()
         done_mask = torch.zeros(exp_cfg["num_envs"], num_agents, device=self.device)
         last_actions = torch.zeros(exp_cfg["num_envs"], num_agents, action_dim, device=self.device)
-        episode_returns = torch.zeros(exp_cfg["num_envs"], device=self.device)
+        episode_returns_raw = torch.zeros(exp_cfg["num_envs"], device=self.device)
         recent_returns: list[float] = []
 
         total_updates = train_cfg["total_updates"]
@@ -132,14 +138,20 @@ class ACORTrainer:
                 log_probs = dist.log_prob(actions)
 
                 step_result = env.step(actions)
-                rewards = step_result.rewards
+                raw_rewards = step_result.rewards
                 dones = step_result.dones
 
-                episode_returns += rewards.sum(dim=-1)
+                rewards = raw_rewards
+                if self.reward_normalizer is not None:
+                    self.reward_normalizer.update(raw_rewards)
+                    rewards = self.reward_normalizer.normalize(raw_rewards)
+                rewards = rewards * self.reward_scale
+
+                episode_returns_raw += raw_rewards.sum(dim=-1)
                 done_envs = dones.sum(dim=-1) > 0
                 if done_envs.any():
-                    recent_returns.extend(episode_returns[done_envs].tolist())
-                    episode_returns[done_envs] = 0.0
+                    recent_returns.extend(episode_returns_raw[done_envs].tolist())
+                    episode_returns_raw[done_envs] = 0.0
 
                 buffer.add(
                     obs=observations.detach(),
@@ -263,5 +275,11 @@ class ACORTrainer:
             "step": step,
             "config": self.config,
         }
+        if self.reward_normalizer is not None:
+            payload["reward_norm"] = {
+                "mean": self.reward_normalizer.mean,
+                "var": self.reward_normalizer.var,
+                "count": self.reward_normalizer.count,
+            }
         path = self.output_dir / f"checkpoint_{step:06d}.pt"
         torch.save(payload, path)
